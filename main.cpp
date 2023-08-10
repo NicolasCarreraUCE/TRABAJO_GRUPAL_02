@@ -2,11 +2,14 @@
 #include <fmt/core.h>
 #include <fstream>
 #include <vector>
+#include <chrono>
 
 #include <png.h>
 
 #include <omp.h>
 #include <mpi.h>
+
+namespace ch=std::chrono;
 
 std::vector<int> read_image_PGM() {
     std::ifstream file("baboon.ascii.pgm", std::ios::binary);
@@ -80,6 +83,7 @@ std::vector<int> read_image_PNG() {
 
     return pixels;
 }
+
 //--01.Serial
 std::vector<int> histograma_serial(std::vector<int> &pixels) {
     std::vector<int> histograma(16, 0);
@@ -113,10 +117,8 @@ std::vector<int> histograma_omp(std::vector<int> &pixels) {
     return histograma;
 }
 
-//--02.MPI
-// mpiexec -n 8 ./TRABAJO_GRUPAL_02
+//--03.MPI
 std::vector<int> histograma_mpi(std::vector<int> &pixels, int &argc, char** &argv) {
-    std::vector<int> histograma(16, 0);
     MPI_Init(&argc, &argv);
 
     int rank, nprocs;
@@ -124,36 +126,119 @@ std::vector<int> histograma_mpi(std::vector<int> &pixels, int &argc, char** &arg
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
+    std::vector<int> histograma_local(16, 0);
+
     int block_size = pixels.size() / nprocs;
+    // Divide la imagen en partes iguales para cada proceso
+    int start = rank * block_size;
+    int end = (rank == nprocs - 1) ? pixels.size() : start + block_size;
+
+    // Cada proceso calcula el histograma para su parte de la imagen
+    for (int i = start; i < end; ++i) {
+        histograma_local[pixels[i] % histograma_local.size()]++;
+    }
+
+    std::vector<int> histograma(16, 0);
+
+    // Suma los histogramas calculados por cada proceso
+    MPI_Reduce(histograma_local.data(), histograma.data(), 16, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
     MPI_Finalize();
     return histograma;
 }
 
 void print_histograma(std::vector<int> &histograma) {
+    fmt::println("{:<10}| {:<10}", "Rango", "Frecuencia");
+    fmt::println("{:-<{}}+{:-<{}}", "", 10, "", 10);
     for( int i=0;i < histograma.size() ;i++) {
-        fmt::println( "{:3} - {:3} {:10}", i * histograma.size(), i * histograma.size() + histograma.size() - 1, histograma[i]);
+        fmt::println( "{:3} - {:3} | {:10}", i * histograma.size(), i * histograma.size() + histograma.size() - 1, histograma[i]);
     }
 }
 
 /**
- * TERMINAL
+ * INSTALAR LIBRERIAS
  * ======================
  * sudo apt-get update
  * sudo apt-get install libopenmpi-dev -y
  * sudo apt-get install libpng-dev
+ *
  * EJECUTAR
  * ======================
- * mpiexec -n 4 ./TRABAJO_GRUPAL_02
+ * mpiexec -n 8 ./TRABAJO_GRUPAL_02
  */
 int main(int argc, char** argv) {
+    // Cargar Imagen
     std::vector<int> imagen_pgm = read_image_PGM();
-
     std::vector<int> imagen_png = read_image_PNG();
 
-    std::vector<int> histograma = histograma_omp(imagen_png);
-    // std::vector<int> histograma  = histograma_mpi(imagen, argc, argv);
-    print_histograma(histograma);
+    // Histograma Serial
+    // Imagen PGM
+    {
+        auto start = ch::high_resolution_clock::now();
+        std::vector<int> histograma = histograma_serial(imagen_pgm);
+        auto end = ch::high_resolution_clock::now();
+        ch::duration<double, std::milli> duration = end-start;
+
+        fmt::println("Histograma Serial (PGM), tiempo: {}ms", duration.count());
+        print_histograma(histograma);
+    }
+    // Imagen PNG
+    {
+        auto start = ch::high_resolution_clock::now();
+        std::vector<int> histograma = histograma_serial(imagen_png);
+        auto end = ch::high_resolution_clock::now();
+        ch::duration<double, std::milli> duration = end-start;
+
+        fmt::println("Histograma Serial (PNG), tiempo: {}ms", duration.count());
+        print_histograma(histograma);
+    }
+    fmt::println("");
+
+    // Histograma OpenMp
+    // Imagen PGM
+    {
+        auto start = ch::high_resolution_clock::now();
+        std::vector<int> histograma = histograma_omp(imagen_pgm);
+        auto end = ch::high_resolution_clock::now();
+        ch::duration<double, std::milli> duration = end-start;
+
+        fmt::println("Histograma OpenMp (PGM), tiempo: {}ms", duration.count());
+        print_histograma(histograma);
+    }
+    // Imagen PNG
+    {
+        auto start = ch::high_resolution_clock::now();
+        std::vector<int> histograma = histograma_omp(imagen_png);
+        auto end = ch::high_resolution_clock::now();
+        ch::duration<double, std::milli> duration = end-start;
+
+        fmt::println("Histograma OpenMp (PNG), tiempo: {}ms", duration.count());
+        print_histograma(histograma);
+    }
+    fmt::println("");
+
+    // Histograma MPI
+    // Imagen PGM
+    {
+        auto start = ch::high_resolution_clock::now();
+        std::vector<int> histograma = histograma_mpi(imagen_pgm, argc, argv);
+        auto end = ch::high_resolution_clock::now();
+        ch::duration<double, std::milli> duration = end-start;
+
+        fmt::println("Histograma MPI (PNG), tiempo: {}ms", duration.count());
+        print_histograma(histograma);
+    }
+    // Imagen PNG
+    {
+        auto start = ch::high_resolution_clock::now();
+        std::vector<int> histograma = histograma_mpi(imagen_png, argc, argv);
+        auto end = ch::high_resolution_clock::now();
+        ch::duration<double, std::milli> duration = end-start;
+
+        fmt::println("Histograma MPI (PNG), tiempo: {}ms", duration.count());
+        print_histograma(histograma);
+    }
+
     return 0;
 }
 
